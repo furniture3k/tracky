@@ -1,0 +1,73 @@
+import AppKit
+import CoreGraphics
+
+/// Optional idle auto-pause. It never polls on its own: `check()` piggybacks on the menu bar's
+/// once-a-minute tick, and sleep/lock/wake are system notifications observed only while enabled.
+@MainActor
+final class IdleMonitor: ObservableObject {
+    static let choices = [0, 5, 10, 15, 30]
+
+    /// Minutes of inactivity before pausing; 0 = off.
+    @Published var minutes: Int {
+        didSet { UserDefaults.standard.set(minutes, forKey: "idleMinutes"); updateObservers(); onChange?() }
+    }
+    @Published var autoResume: Bool {
+        didSet { UserDefaults.standard.set(autoResume, forKey: "idleAutoResume"); onChange?() }
+    }
+
+    var enabled: Bool { minutes > 0 }
+    var onChange: (() -> Void)?
+
+    private let tracker: Tracker
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+
+    init(tracker: Tracker) {
+        self.tracker = tracker
+        let d = UserDefaults.standard
+        minutes = d.object(forKey: "idleMinutes") as? Int ?? 10
+        autoResume = d.object(forKey: "idleAutoResume") as? Bool ?? true
+        updateObservers()
+    }
+
+    /// Seconds since the last keyboard/mouse/trackpad input.
+    static var idleSeconds: Double {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
+    func check() {
+        guard enabled else { return }
+        let idle = Self.idleSeconds
+        if tracker.isRunning, idle >= Double(minutes * 60) {
+            tracker.autoPause(at: Date().addingTimeInterval(-idle))
+        } else if tracker.isPaused, autoResume, idle < 60 {
+            tracker.resume()
+        }
+    }
+
+    private func away() {
+        if enabled, tracker.isRunning { tracker.autoPause(at: Date()) }
+    }
+
+    private func back() {
+        if enabled, autoResume, tracker.isPaused { tracker.resume() }
+    }
+
+    private func updateObservers() {
+        for (center, token) in observers { center.removeObserver(token) }
+        observers.removeAll()
+        guard enabled else { return }
+
+        let ws = NSWorkspace.shared.notificationCenter
+        let dist = DistributedNotificationCenter.default()
+        func observe(_ c: NotificationCenter, _ name: String, _ f: @escaping @MainActor () -> Void) {
+            observers.append((c, c.addObserver(forName: .init(name), object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { f() }
+            }))
+        }
+        observe(ws, NSWorkspace.willSleepNotification.rawValue) { [weak self] in self?.away() }
+        observe(ws, NSWorkspace.screensDidSleepNotification.rawValue) { [weak self] in self?.away() }
+        observe(dist, "com.apple.screenIsLocked") { [weak self] in self?.away() }
+        observe(ws, NSWorkspace.didWakeNotification.rawValue) { [weak self] in self?.back() }
+        observe(dist, "com.apple.screenIsUnlocked") { [weak self] in self?.back() }
+    }
+}
