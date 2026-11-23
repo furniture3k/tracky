@@ -152,9 +152,8 @@ struct UndoToast: View {
                     }
                 }
                 .font(.callout)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Brand.hairline))
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .glassPanel(cornerRadius: 20)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .task(id: tracker.undoID) {
                     do { try await Task.sleep(for: .seconds(6)) } catch { return }

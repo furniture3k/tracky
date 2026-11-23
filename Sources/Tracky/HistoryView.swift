@@ -2,16 +2,22 @@ import SwiftUI
 
 struct HistoryView: View {
     @ObservedObject var tracker: Tracker
+    /// Exact tag picked in the sidebar ("" = untagged); nil shows everything.
+    var tag: String?
     @ViewState private var editing: Session?
     @ViewState private var query = ""
 
     private struct Day: Identifiable { let id: Date; let sessions: [Session]; let total: Double }
 
     private var filtered: [Session] {
+        var list = tracker.sessions
+        if let tag { list = list.filter { $0.tag == tag } }
         let q = query.trimmingCharacters(in: .whitespaces)
-        if q.isEmpty { return tracker.sessions }
-        if q.lowercased() == "untagged" { return tracker.sessions.filter { $0.tag.isEmpty } }
-        return tracker.sessions.filter { $0.tag.localizedCaseInsensitiveContains(q) }
+        if q.isEmpty { return list }
+        if "untagged".hasPrefix(q.lowercased()) || "no tag".hasPrefix(q.lowercased()) {
+            return list.filter { $0.tag.isEmpty || $0.tag.localizedCaseInsensitiveContains(q) }
+        }
+        return list.filter { $0.tag.localizedCaseInsensitiveContains(q) }
     }
 
     private func days(_ list: [Session]) -> [Day] {
@@ -25,38 +31,13 @@ struct HistoryView: View {
 
     var body: some View {
         let list = filtered
-        let total = list.reduce(0) { $0 + $1.duration() }
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                    TextField("Filter by tag", text: $query).textFieldStyle(.plain)
-                    if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
-                            .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary.opacity(0.6)))
-                .frame(maxWidth: 260)
-
-                Text("\(list.count) sessions · \(Stats.format(total))")
-                    .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    let now = Date()
-                    editing = Session(start: now.addingTimeInterval(-3600), end: now, tag: tracker.selectedTag)
-                } label: { Label("Add session", systemImage: "plus") }
-                    .keyboardShortcut("n", modifiers: .command)
-            }
-            .padding(.horizontal, 20).padding(.vertical, 12)
-
+        Group {
             if list.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "tray").font(.system(size: 28, weight: .light)).foregroundStyle(.tertiary)
-                    Text(query.isEmpty ? "No sessions yet" : "No sessions match “\(query)”").foregroundStyle(.secondary)
+                ContentUnavailableView {
+                    Label(query.isEmpty ? "No sessions yet" : "No results", systemImage: query.isEmpty ? "tray" : "magnifyingglass")
+                } description: {
+                    Text(query.isEmpty ? "Sessions you track, or add by hand, appear here." : "Nothing tagged “\(query)”.")
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(days(list)) { day in
@@ -67,11 +48,9 @@ struct HistoryView: View {
                                     .onTapGesture(count: 2) { editing = s }
                                     .contextMenu {
                                         Button("Edit…") { editing = s }
-                                        Button("Duplicate as new") {
-                                            var c = Session(start: s.start, end: s.end ?? Date(), tag: s.tag)
-                                            c.start = Date().addingTimeInterval(-(s.duration()))
-                                            c.end = Date()
-                                            editing = c
+                                        Button("Duplicate as New") {
+                                            let now = Date()
+                                            editing = Session(start: now.addingTimeInterval(-s.duration()), end: now, tag: s.tag)
                                         }
                                         Divider()
                                         Button("Delete", role: .destructive) { tracker.delete(s.id) }
@@ -79,17 +58,29 @@ struct HistoryView: View {
                             }
                         } header: {
                             HStack {
-                                Text(dayTitle(day.id)).font(.system(size: 12, weight: .semibold))
+                                Text(dayTitle(day.id))
                                 Spacer()
-                                Text(Stats.format(day.total)).font(.system(size: 12, weight: .semibold).monospacedDigit())
+                                Text(Stats.format(day.total)).monospacedDigit()
                             }
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .padding(.vertical, 2)
                         }
                     }
                 }
                 .listStyle(.inset)
                 .scrollContentBackground(.hidden)
+                .softScrollEdge()
+            }
+        }
+        .searchable(text: $query, placement: .toolbar, prompt: "Filter by tag")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    let now = Date()
+                    editing = Session(start: now.addingTimeInterval(-3600), end: now, tag: tag ?? tracker.selectedTag)
+                } label: { Label("Add Session", systemImage: "plus") }
+                    .keyboardShortcut("n", modifiers: .command)
+                    .help("Add a session by hand (⌘N)")
             }
         }
         .sheet(item: $editing) { s in
@@ -111,7 +102,7 @@ struct HistoryView: View {
 
     private func row(_ s: Session) -> some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 2).fill(Brand.color(for: s.tag)).frame(width: 4, height: 26)
+            Circle().fill(Brand.color(for: s.tag)).frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 2) {
                 Text(s.tag.isEmpty ? "No tag" : s.tag)
                     .foregroundStyle(s.tag.isEmpty ? .secondary : .primary)
@@ -119,9 +110,9 @@ struct HistoryView: View {
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             if s.end == nil {
-                Text("LIVE").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Brand.signal))
+                Text("Running").font(.caption.weight(.semibold)).foregroundStyle(Brand.signal)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Brand.signal.opacity(0.14)))
             }
             if s.auto {
                 Text("auto-paused").font(.caption2).foregroundStyle(.secondary)
@@ -129,7 +120,7 @@ struct HistoryView: View {
                     .background(Capsule().fill(.quaternary))
             }
             Spacer()
-            Text(Stats.format(s.duration())).font(.system(.body, design: .rounded).weight(.medium).monospacedDigit())
+            Text(Stats.format(s.duration())).font(.body.weight(.medium).monospacedDigit())
             Button { editing = s } label: { Image(systemName: "pencil").foregroundStyle(.tertiary) }
                 .buttonStyle(.plain)
                 .help("Edit")

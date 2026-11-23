@@ -23,6 +23,10 @@ fi
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/Tracky"
 strip -S -x "$APP/Contents/MacOS/Tracky"
+# SwiftPM stamps the deployment target as the SDK version, which makes macOS 26+ run the app in
+# compatibility mode with the old pre-Liquid Glass look. Stamp the real SDK version instead.
+vtool -set-build-version macos 14.0 "$(xcrun --show-sdk-version)" -replace \
+  -output "$APP/Contents/MacOS/Tracky" "$APP/Contents/MacOS/Tracky" 2>/dev/null
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 codesign --force --sign - "$APP" >/dev/null
 

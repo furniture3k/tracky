@@ -117,27 +117,24 @@ struct PopoverView: View {
 
     private var startStop: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(action: { withAnimation(.tracky) { tracker.toggle() } }) {
-                HStack(spacing: 7) {
-                    Image(systemName: tracker.isRunning ? "stop.fill" : "play.fill").font(.system(size: 11))
-                    Text(tracker.isRunning ? "Stop" : (tracker.isPaused ? "Resume" : "Start"))
+            Group {
+                if tracker.isRunning {
+                    Button(action: { withAnimation(.tracky) { tracker.toggle() } }) { startStopLabel }
+                        .glassButton()
+                } else {
+                    Button(action: { withAnimation(.tracky) { tracker.toggle() } }) { startStopLabel }
+                        .prominentButton()
+                        .tint(Brand.signal)
                 }
-                .font(.system(size: 14, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .foregroundStyle(tracker.isRunning ? Color.primary : Color.white)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(tracker.isRunning ? AnyShapeStyle(Color.primary.opacity(0.08)) : AnyShapeStyle(Brand.signal))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(tracker.isRunning ? Brand.hairline : .clear)
-                )
-                .contentShape(Rectangle())
             }
-            .buttonStyle(PressStyle())
-            .keyboardShortcut(.return, modifiers: .command)
+            .controlSize(.large)
+            .buttonBorderShape(.capsule)
+            .background {
+                // ⌘↩ toggles. Kept off the visible button: a Return shortcut makes macOS paint it as the default button.
+                Button("") { withAnimation(.tracky) { tracker.toggle() } }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .opacity(0).allowsHitTesting(false)
+            }
 
             // Always occupies the same height, so the panel never jumps when you start or stop.
             ZStack(alignment: .leading) {
@@ -161,19 +158,28 @@ struct PopoverView: View {
         .animation(.tracky, value: tracker.isRunning)
     }
 
-    private func mini(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label).font(.caption.weight(.medium)).fixedSize()
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Brand.muted))
-                .contentShape(Rectangle())
+    private var startStopLabel: some View {
+        HStack(spacing: 7) {
+            Image(systemName: tracker.isRunning ? "stop.fill" : "play.fill").font(.system(size: 11))
+            Text(tracker.isRunning ? "Stop" : (tracker.isPaused ? "Resume" : "Start"))
         }
-        .buttonStyle(PressStyle())
+        .font(.system(size: 14, weight: .semibold))
+        .frame(maxWidth: .infinity)
+    }
+
+    private func mini(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Text(label).fixedSize() }
+            .glassButton()
+            .controlSize(.mini)
     }
 
     // MARK: Tags
 
     private var tags: some View {
+        GlassGroup(spacing: 6) { tagFlow }
+    }
+
+    private var tagFlow: some View {
         FlowLayout(spacing: 6) {
             chip("No tag", color: nil, selected: tracker.selectedTag.isEmpty) { tracker.selectTag("") }
             ForEach(tracker.tags, id: \.self) { t in
@@ -204,8 +210,8 @@ struct PopoverView: View {
             } else {
                 Button { addingTag = true; focus(.newTag) } label: {
                     Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
-                        .frame(width: 26, height: 22)
-                        .background(Capsule().strokeBorder(Brand.muted, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                        .frame(width: 28, height: 24)
+                        .glassCapsule()
                         .contentShape(Capsule())
                 }
                 .buttonStyle(PressStyle())
@@ -228,7 +234,8 @@ struct PopoverView: View {
             .font(.callout)
             .frame(width: 96)
             .padding(.horizontal, 10).padding(.vertical, 3)
-            .background(Capsule().strokeBorder(Brand.signal.opacity(0.7)))
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+            .overlay(Capsule().strokeBorder(Brand.signal.opacity(0.8)))
             .focused($focusedField, equals: field)
             .onSubmit(submit)
             .onExitCommand(perform: cancel)
@@ -244,10 +251,9 @@ struct PopoverView: View {
                 if let color { Circle().fill(selected ? Color.white : color).frame(width: 6, height: 6) }
                 Text(label).font(.callout).lineLimit(1)
             }
-            .padding(.horizontal, 10).padding(.vertical, 3)
+            .padding(.horizontal, 10).padding(.vertical, 4)
             .foregroundStyle(selected ? Color.white : Color.primary)
-            .background(Capsule().fill(selected ? (color ?? Color.primary.opacity(0.75)) : .clear))
-            .overlay(Capsule().strokeBorder(selected ? .clear : Brand.muted))
+            .glassCapsule(tint: selected ? (color ?? Color.primary.opacity(0.75)) : nil)
             .contentShape(Capsule())
         }
         .buttonStyle(PressStyle())

@@ -4,9 +4,11 @@ import SwiftUI
 struct StatsView: View {
     @ObservedObject var tracker: Tracker
     @ObservedObject var prefs: Prefs
-    @ViewState private var tab = 0
+    @ViewState private var selection: Pane? = .overview
     @ViewState private var confirm: DeleteScope?
     @AppStorage("statsRange") private var range = 12
+
+    enum Pane: Hashable { case overview, history, tag(String) }
 
     enum DeleteScope: String, Identifiable {
         case hour = "in the last hour", today = "today", week = "this week"
@@ -14,26 +16,16 @@ struct StatsView: View {
     }
 
     var body: some View {
-        ZStack {
-            if tab == 0 {
-                TimelineView(.everyMinute) { ctx in
-                    Overview(tracker: tracker,
-                             report: Report(sessions: tracker.sessions, rangeWeeks: range, now: ctx.date),
-                             goal: Double(prefs.weeklyGoal) * 3600, now: ctx.date)
-                }
-                .transition(.opacity)
-            } else {
-                HistoryView(tracker: tracker)
-                    .transition(.opacity)
-            }
+        NavigationSplitView {
+            sidebar.navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
+        } detail: {
+            detail
+                .toolbar { commonToolbar }
         }
-        .animation(.easeInOut(duration: 0.18), value: tab)
-        .frame(minWidth: 760, minHeight: 520)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(WindowTitle(title: title, subtitle: subtitle))
+        .frame(minWidth: 900, minHeight: 600)
         .overlay(alignment: .bottom) { UndoToast(tracker: tracker).padding(.bottom, 18) }
         .environment(\.calendar, Stats.calendar)
-        .navigationTitle("Tracky")
-        .toolbar { toolbar }
         .confirmationDialog(confirm.map { "Delete everything tracked \($0.rawValue)?" } ?? "",
                             isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }),
                             presenting: confirm) { scope in
@@ -45,8 +37,8 @@ struct StatsView: View {
         .background {
             // Window-level shortcuts.
             Group {
-                Button("") { tab = 0 }.keyboardShortcut("1", modifiers: .command)
-                Button("") { tab = 1 }.keyboardShortcut("2", modifiers: .command)
+                Button("") { selection = .overview }.keyboardShortcut("1", modifiers: .command)
+                Button("") { selection = .history }.keyboardShortcut("2", modifiers: .command)
                 Button("") { tracker.undo() }.keyboardShortcut("z", modifiers: .command).disabled(!tracker.canUndo)
                 Button("") { StatsWindow.exportCSV(tracker.sessions) }.keyboardShortcut("e", modifiers: .command)
             }
@@ -54,47 +46,115 @@ struct StatsView: View {
         }
     }
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            HStack(spacing: 8) {
-                BrandMark(size: 22)
-                Text("Tracky").font(.system(size: 14, weight: .semibold))
+    // MARK: Sidebar
+
+    private struct TagRow: Identifiable { var id: String { name }; let name: String; let week: Double }
+
+    private var tagRows: [TagRow] {
+        let now = Date()
+        let wk = Stats.weekStart(now)
+        var totals: [String: Double] = [:]
+        Stats.slices(tracker.sessions.filter { ($0.end ?? now) > wk }, from: wk, to: now, unit: .day) { _, t, s in totals[t, default: 0] += s }
+        var rows = tracker.tags.map { TagRow(name: $0, week: totals[$0] ?? 0) }
+        if tracker.sessions.contains(where: { $0.tag.isEmpty }) { rows.append(TagRow(name: "", week: totals[""] ?? 0)) }
+        return rows
+    }
+
+    private var sidebar: some View {
+        List(selection: $selection) {
+            Section {
+                Label("Overview", systemImage: "chart.bar.xaxis").tag(Pane.overview)
+                Label("History", systemImage: "list.bullet.rectangle").tag(Pane.history)
             }
-            .padding(.leading, 4)
-        }
-        ToolbarItem(placement: .principal) {
-            Picker("View", selection: $tab) {
-                Text("Overview").tag(0)
-                Text("History").tag(1)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
-        }
-        ToolbarItemGroup(placement: .primaryAction) {
-            if tab == 0 {
-                Menu {
-                    Picker("Average over", selection: $range) {
-                        Text("Last 4 weeks").tag(4)
-                        Text("Last 12 weeks").tag(12)
-                        Text("Last year").tag(52)
-                        Text("All time").tag(0)
+            let rows = tagRows
+            if !rows.isEmpty {
+                Section("Tags") {
+                    ForEach(rows) { t in
+                        HStack(spacing: 8) {
+                            Circle().fill(Brand.color(for: t.name)).frame(width: 8, height: 8)
+                            Text(t.name.isEmpty ? "No tag" : t.name).lineLimit(1)
+                            Spacer()
+                            if t.week >= 60 {
+                                Text(Stats.format(t.week)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                        }
+                        .tag(Pane.tag(t.name))
+                        .help("This week: \(Stats.format(t.week))")
                     }
-                    .pickerStyle(.inline)
-                } label: {
-                    Text(rangeLabel)
                 }
-                .fixedSize()
-                .help("Range used for averages and breakdowns")
             }
+        }
+        .listStyle(.sidebar)
+    }
+
+    // MARK: Detail
+
+    @ViewBuilder private var detail: some View {
+        switch selection ?? .overview {
+        case .overview:
+            TimelineView(.everyMinute) { ctx in
+                Overview(tracker: tracker,
+                         report: Report(sessions: tracker.sessions, rangeWeeks: range, now: ctx.date),
+                         goal: Double(prefs.weeklyGoal) * 3600, now: ctx.date)
+            }
+        case .history:
+            HistoryView(tracker: tracker, tag: nil)
+        case .tag(let t):
+            HistoryView(tracker: tracker, tag: t).id(t)
+        }
+    }
+
+    private var title: String {
+        switch selection ?? .overview {
+        case .overview: "Overview"
+        case .history: "History"
+        case .tag(let t): t.isEmpty ? "No tag" : t
+        }
+    }
+
+    private var subtitle: String {
+        let now = Date()
+        switch selection ?? .overview {
+        case .overview:
+            return "Week of \(Stats.weekStart(now).formatted(.dateTime.day().month(.wide)))"
+        case .history:
+            return "\(tracker.sessions.count) sessions"
+        case .tag(let t):
+            let list = tracker.sessions.filter { $0.tag == t }
+            return "\(list.count) session\(list.count == 1 ? "" : "s") · \(Stats.format(list.reduce(0) { $0 + $1.duration(now: now) })) total"
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var commonToolbar: some ToolbarContent {
+        if selection == .overview || selection == nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Picker("Average over", selection: $range) {
+                            Text("Last 4 weeks").tag(4)
+                            Text("Last 12 weeks").tag(12)
+                            Text("Last year").tag(52)
+                            Text("All time").tag(0)
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label(rangeLabel, systemImage: "calendar")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .help("Range used for averages and breakdowns")
+                }
+        }
+        ToolbarItem(placement: .primaryAction) {
             Menu {
-                Button("Delete last hour") { confirm = .hour }
-                Button("Delete today") { confirm = .today }
-                Button("Delete this week") { confirm = .week }
+                Button("Delete Last Hour…") { confirm = .hour }
+                Button("Delete Today…") { confirm = .today }
+                Button("Delete This Week…") { confirm = .week }
             } label: {
                 Label("Delete", systemImage: "trash")
             }
             .help("Delete tracked time")
+        }
+        ToolbarItem(placement: .primaryAction) {
             Button { StatsWindow.exportCSV(tracker.sessions) } label: {
                 Label("Export CSV", systemImage: "square.and.arrow.up")
             }
@@ -163,21 +223,24 @@ private struct Overview: View {
                 .padding(20)
                 .padding(.bottom, 40)
             }
+            .softScrollEdge()
         }
     }
 
     private var empty: some View {
-        VStack(spacing: 14) {
-            BrandMark(size: 56)
-            Text("Nothing tracked yet").font(.title2.weight(.semibold))
-            Text("Press ⌥⌘T, or right-click the menu bar icon, to start your first session.")
-                .foregroundStyle(.secondary)
-            Button("Start tracking") { tracker.toggle() }
-                .buttonStyle(.borderedProminent)
-                .tint(Brand.signal)
-                .padding(.top, 4)
+        ContentUnavailableView {
+            Label { Text("Nothing tracked yet") } icon: { BrandMark(size: 64) }
+        } description: {
+            Text("Press ⌥⌘T or right-click the menu bar icon to start and stop. Your weekly stats build up here.")
+        } actions: {
+            Button { tracker.toggle() } label: {
+                Label(tracker.isRunning ? "Tracking…" : "Start Tracking", systemImage: "play.fill").padding(.horizontal, 6)
+            }
+            .prominentButton()
+            .tint(Brand.signal)
+            .controlSize(.large)
+            .disabled(tracker.isRunning)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Hero
@@ -517,11 +580,10 @@ private struct Overview: View {
     }
 }
 
-/// Flat card surface: plain fill and a hairline. No shadow.
+/// Content surface: a soft system fill with generous continuous corners. No borders or shadows.
 struct Surface: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Color(nsColor: .controlBackgroundColor))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Brand.hairline))
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color(nsColor: .quaternarySystemFill))
     }
 }

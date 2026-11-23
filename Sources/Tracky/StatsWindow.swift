@@ -21,13 +21,12 @@ final class StatsWindow: NSObject, NSWindowDelegate {
             let w = NSWindow(contentViewController: host)
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             w.toolbarStyle = .unified
-            w.titleVisibility = .hidden
             w.isReleasedWhenClosed = false
             w.delegate = self
-            w.setContentSize(NSSize(width: 900, height: 760))
-            w.minSize = NSSize(width: 760, height: 560)
+            w.setContentSize(NSSize(width: 1080, height: 780))
+            w.minSize = NSSize(width: 900, height: 600)
             w.center()
-            w.setFrameAutosaveName("TrackyStats")
+            w.setFrameAutosaveName("TrackyStats2")
             window = w
         }
         NSApp.activate()
