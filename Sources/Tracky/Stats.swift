@@ -132,13 +132,19 @@ struct Report {
         thisWeekByDay = (0..<7).map { days[cal.date(byAdding: .day, value: $0, to: curWeek)!] ?? 0 }
         let completedTotal = days.filter { $0.key < curWeek }.values.reduce(0, +)
         weeklyAverage = completed > 0 ? completedTotal / Double(completed) : 0
+        // Pace: what you'd usually have by this point in the week. One pass over sessions, split by week.
         if completed > 0 {
             let offset = now.timeIntervalSince(curWeek)
             var paceSum = 0.0
-            for k in 1...completed {
-                let ws = cal.date(byAdding: .weekOfYear, value: -k, to: curWeek)!
-                for s in sessions where s.start < ws.addingTimeInterval(offset) && (s.end ?? now) > ws {
-                    paceSum += min(s.end ?? now, ws.addingTimeInterval(offset)).timeIntervalSince(max(s.start, ws))
+            for s in sessions where (s.end ?? now) > windowStart && s.start < curWeek {
+                var a = max(s.start, windowStart)
+                let b = min(s.end ?? now, curWeek)
+                while a < b {
+                    let ws = Stats.weekStart(a, cal: cal)
+                    let e = min(cal.date(byAdding: .weekOfYear, value: 1, to: ws)!, b)
+                    let cutoff = ws.addingTimeInterval(offset)
+                    if a < cutoff { paceSum += min(e, cutoff).timeIntervalSince(a) }
+                    a = e
                 }
             }
             paceAverage = paceSum / Double(completed)

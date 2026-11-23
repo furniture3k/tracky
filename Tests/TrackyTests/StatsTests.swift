@@ -144,7 +144,7 @@ private func s(_ a: String, _ b: String?, _ tag: String = "") -> Session {
 private func tracker(_ sessions: [Session]) -> Tracker {
     let store = Store(url: FileManager.default.temporaryDirectory.appendingPathComponent("tracky-\(UUID()).trk"))
     store.save(sessions)
-    return Tracker(store: store)
+    return Tracker(store: store, defaults: UserDefaults(suiteName: "tracky-test-\(UUID())")!)
 }
 
 @MainActor @Test func removeRangeTrimsAndUndoes() {
@@ -168,12 +168,55 @@ private func tracker(_ sessions: [Session]) -> Tracker {
     #expect(abs(t.sessions[0].duration() - 3600) < 5)
 }
 
-@MainActor @Test func switchingTagSplitsRunningSession() {
-    let t = tracker([Session(start: Date().addingTimeInterval(-600), tag: "A")])
+@MainActor @Test func pickingTagEarlyRelabelsRunningSession() {
+    let t = tracker([Session(start: Date().addingTimeInterval(-120), tag: "A")])
+    t.selectTag("B")
+    #expect(t.sessions.count == 1)
+    #expect(t.running?.tag == "B")
+    #expect(t.tags == ["A", "B"])
+}
+
+@MainActor @Test func switchingTagLaterSplitsAndIsUndoable() {
+    let t = tracker([Session(start: Date().addingTimeInterval(-3600), tag: "A")])
     t.selectTag("B")
     #expect(t.sessions.count == 2)
     #expect(t.sessions[0].tag == "A" && t.sessions[0].end != nil)
     #expect(t.running?.tag == "B")
+    #expect(t.canUndo)
+    t.undo()
+    #expect(t.sessions.count == 1 && t.running?.tag == "A")
+}
+
+@MainActor @Test func tagsKeepStableOrderAndMatchCase() {
+    let t = tracker([s("2026-11-20T09:00", "2026-11-20T10:00", "Uni"), s("2026-11-21T09:00", "2026-11-21T10:00", "Client")])
+    #expect(t.tags == ["Uni", "Client"])
+    t.selectTag("client")          // case-insensitive reuse, no duplicate
+    #expect(t.tags == ["Uni", "Client"])
+    #expect(t.selectedTag == "Client")
+    t.selectTag("Gym")             // new tags stick around even before a session uses them
+    t.selectTag("Uni")
+    #expect(t.tags == ["Uni", "Client", "Gym"])
+}
+
+@MainActor @Test func renameAndRemoveTags() {
+    let t = tracker([s("2026-11-20T09:00", "2026-11-20T10:00", "Uni"), s("2026-11-21T09:00", "2026-11-21T10:00", "Client")])
+    t.renameTag("Uni", to: "University")
+    #expect(t.sessions[0].tag == "University")
+    #expect(t.tags == ["University", "Client"])
+    t.renameTag("University", to: "client")   // merges into existing tag
+    #expect(t.tags == ["Client"])
+    #expect(t.sessions.allSatisfy { $0.tag == "Client" })
+    t.removeTag("Client")
+    #expect(t.tags.isEmpty)
+    #expect(t.sessions[0].tag == "Client")    // history keeps its labels
+}
+
+@MainActor @Test func resumeNeverOverlapsPreviousSession() {
+    let now = Date()
+    let t = tracker([Session(start: now.addingTimeInterval(-600), tag: "A")])
+    t.autoPause(at: now.addingTimeInterval(-60))
+    t.resume(at: now.addingTimeInterval(-300))  // asked to start before the last session ended
+    #expect(t.running!.start == t.sessions[0].end)
 }
 
 @MainActor @Test func shiftStartNeverOverlaps() {

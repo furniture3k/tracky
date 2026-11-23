@@ -95,7 +95,7 @@ struct HistoryView: View {
         .sheet(item: $editing) { s in
             EditSession(session: s,
                         isNew: !tracker.sessions.contains { $0.id == s.id },
-                        tags: tracker.recentTags,
+                        tags: tracker.tags,
                         onSave: { tracker.upsert($0); editing = nil },
                         onDelete: { tracker.delete(s.id); editing = nil },
                         onCancel: { editing = nil })
@@ -121,7 +121,7 @@ struct HistoryView: View {
             if s.end == nil {
                 Text("LIVE").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
                     .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Brand.gradient))
+                    .background(Capsule().fill(Brand.signal))
             }
             if s.auto {
                 Text("auto-paused").font(.caption2).foregroundStyle(.secondary)

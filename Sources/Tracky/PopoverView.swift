@@ -1,54 +1,87 @@
 import ServiceManagement
 import SwiftUI
 
+/// One spring used everywhere so motion feels consistent.
+extension Animation {
+    static let tracky = Animation.spring(response: 0.34, dampingFraction: 0.88)
+}
+
 struct PopoverView: View {
     @ObservedObject var tracker: Tracker
     @ObservedObject var idle: IdleMonitor
     @ObservedObject var prefs: Prefs
     var openStats: () -> Void
 
+    @ViewState private var showSettings = false
     @ViewState private var addingTag = false
     @ViewState private var newTag = ""
-    @ViewState private var showSettings = false
+    @ViewState private var renaming: String?
+    @ViewState private var renameText = ""
     @ViewState private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @FocusState private var tagFieldFocused: Bool
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case newTag, rename }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             topBar
-            timer
-            startStop
-            tags
-            Divider().opacity(0.6)
-            glance
-            if showSettings {
-                Divider().opacity(0.6)
-                settings.transition(.opacity.combined(with: .move(edge: .top)))
+            ZStack(alignment: .topLeading) {
+                main
+                    .offset(x: showSettings ? -24 : 0)
+                    .opacity(showSettings ? 0 : 1)
+                    .allowsHitTesting(!showSettings)
+                if showSettings {
+                    settings
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .transition(.asymmetric(insertion: .offset(x: 28).combined(with: .opacity),
+                                                removal: .offset(x: 28).combined(with: .opacity)))
+                }
             }
-            Divider().opacity(0.6)
-            footer
         }
         .padding(18)
         .frame(width: 300)
-        .overlay(alignment: .bottom) { UndoToast(tracker: tracker).padding(.bottom, 8) }
-        .animation(.snappy(duration: 0.22), value: showSettings)
-        .animation(.snappy(duration: 0.22), value: tracker.isRunning)
-        .animation(.snappy(duration: 0.22), value: tracker.undoMessage)
+        .overlay(alignment: .bottom) { UndoToast(tracker: tracker).padding(.bottom, 10) }
     }
 
-    // MARK: Top
+    // MARK: Top bar
 
     private var topBar: some View {
         HStack(spacing: 8) {
             BrandMark(size: 20)
-            Text("Tracky").font(.system(size: 13, weight: .semibold))
+            Text(showSettings ? "Settings" : "Tracky")
+                .font(.system(size: 13, weight: .semibold))
+                .contentTransition(.opacity)
             Spacer()
-            Button { showSettings.toggle() } label: {
-                Image(systemName: "gearshape").font(.system(size: 13))
-                    .foregroundStyle(showSettings ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(.secondary))
+            Button {
+                withAnimation(.tracky) { showSettings.toggle() }
+            } label: {
+                ZStack {
+                    Image(systemName: "gearshape").opacity(showSettings ? 0 : 1)
+                    Text("Done").font(.system(size: 12, weight: .semibold)).foregroundStyle(Brand.signal)
+                        .opacity(showSettings ? 1 : 0)
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 36, minHeight: 20, alignment: .trailing)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Settings")
+            .keyboardShortcut(",", modifiers: .command)
+            .help(showSettings ? "Back" : "Settings (⌘,)")
+        }
+    }
+
+    // MARK: Main page
+
+    private var main: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            timer
+            startStop
+            tags
+            Brand.hairline.frame(height: 1)
+            glance
+            Brand.hairline.frame(height: 1)
+            footer
         }
     }
 
@@ -56,12 +89,11 @@ struct PopoverView: View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
             VStack(alignment: .leading, spacing: 4) {
                 Text(tracker.running.map { Stats.clock($0.duration(now: ctx.date)) } ?? "0:00:00")
-                    .font(.system(size: 40, weight: .light, design: .rounded).monospacedDigit())
+                    .font(.system(size: 40, weight: .light).monospacedDigit())
                     .foregroundStyle(tracker.isRunning ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-                    .contentTransition(.numericText())
                 HStack(spacing: 6) {
                     Circle().fill(statusColor).frame(width: 7, height: 7)
-                    Text(status).font(.callout).foregroundStyle(.secondary)
+                    Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
                     if let r = tracker.running {
                         Text("since \(r.start.formatted(date: .omitted, time: .shortened))")
@@ -73,8 +105,8 @@ struct PopoverView: View {
     }
 
     private var statusColor: Color {
-        if let r = tracker.running { return r.tag.isEmpty ? Brand.accent : Brand.color(for: r.tag) }
-        return tracker.isPaused ? .yellow : Color.gray.opacity(0.4)
+        if let r = tracker.running { return r.tag.isEmpty ? Brand.signal : Brand.color(for: r.tag) }
+        return tracker.isPaused ? Color.orange : Color.gray.opacity(0.4)
     }
 
     private var status: String {
@@ -84,51 +116,59 @@ struct PopoverView: View {
     }
 
     private var startStop: some View {
-        VStack(spacing: 8) {
-            Button(action: tracker.toggle) {
-                HStack(spacing: 8) {
-                    Image(systemName: tracker.isRunning ? "stop.fill" : "play.fill").font(.system(size: 12))
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { withAnimation(.tracky) { tracker.toggle() } }) {
+                HStack(spacing: 7) {
+                    Image(systemName: tracker.isRunning ? "stop.fill" : "play.fill").font(.system(size: 11))
                     Text(tracker.isRunning ? "Stop" : (tracker.isPaused ? "Resume" : "Start"))
                 }
                 .font(.system(size: 14, weight: .semibold))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .padding(.vertical, 9)
                 .foregroundStyle(tracker.isRunning ? Color.primary : Color.white)
-                .background {
-                    if tracker.isRunning {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary)
-                    } else {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Brand.gradient)
-                            .shadow(color: Brand.accent.opacity(0.35), radius: 6, y: 2)
-                    }
-                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(tracker.isRunning ? AnyShapeStyle(Color.primary.opacity(0.08)) : AnyShapeStyle(Brand.signal))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(tracker.isRunning ? Brand.hairline : .clear)
+                )
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressStyle())
             .keyboardShortcut(.return, modifiers: .command)
 
-            if tracker.isRunning {
+            // Always occupies the same height, so the panel never jumps when you start or stop.
+            ZStack(alignment: .leading) {
                 HStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath").font(.caption).foregroundStyle(.tertiary)
-                        .help("Started earlier? Move the start time back")
+                    Text("Started earlier?").font(.caption).foregroundStyle(.tertiary).fixedSize()
                     mini("−5m") { tracker.shiftStart(minutes: 5) }
                     mini("−15m") { tracker.shiftStart(minutes: 15) }
                     mini("−30m") { tracker.shiftStart(minutes: 30) }
-                    Spacer()
-                    mini("Discard") { tracker.discardRunning() }.help("Throw away this session")
+                    Spacer(minLength: 4)
+                    mini("Discard") { tracker.discardRunning() }.help("Throw away this session (undoable)")
                 }
+                .opacity(tracker.isRunning ? 1 : 0)
+                .allowsHitTesting(tracker.isRunning)
+
+                Text("⌥⌘T or right-click the menu bar icon to start and stop")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .opacity(tracker.isRunning ? 0 : 1)
             }
+            .frame(height: 20)
         }
+        .animation(.tracky, value: tracker.isRunning)
     }
 
     private func mini(_ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label).font(.caption.weight(.medium))
-                .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(Capsule().fill(.quaternary))
-                .contentShape(Capsule())
+            Text(label).font(.caption.weight(.medium)).fixedSize()
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Brand.muted))
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressStyle())
     }
 
     // MARK: Tags
@@ -136,51 +176,81 @@ struct PopoverView: View {
     private var tags: some View {
         FlowLayout(spacing: 6) {
             chip("No tag", color: nil, selected: tracker.selectedTag.isEmpty) { tracker.selectTag("") }
-            ForEach(tracker.recentTags, id: \.self) { t in
-                chip(t, color: Brand.color(for: t), selected: tracker.selectedTag == t) { tracker.selectTag(t) }
-            }
-            if !tracker.selectedTag.isEmpty && !tracker.recentTags.contains(tracker.selectedTag) {
-                chip(tracker.selectedTag, color: Brand.color(for: tracker.selectedTag), selected: true) {}
+            ForEach(tracker.tags, id: \.self) { t in
+                if renaming == t {
+                    inlineField($renameText, field: .rename, placeholder: t) {
+                        tracker.renameTag(t, to: renameText)
+                        renaming = nil
+                    } cancel: { renameText = ""; renaming = nil }
+                } else {
+                    chip(t, color: Brand.color(for: t), selected: tracker.selectedTag == t) { tracker.selectTag(t) }
+                        .contextMenu {
+                            Button("Rename…") { renameText = t; renaming = t; focus(.rename) }
+                            Button("Move Left") { tracker.moveTag(t, by: -1) }
+                                .disabled(tracker.tags.first == t)
+                            Button("Move Right") { tracker.moveTag(t, by: 1) }
+                                .disabled(tracker.tags.last == t)
+                            Divider()
+                            Button("Remove from List") { tracker.removeTag(t) }
+                        }
+                }
             }
             if addingTag {
-                TextField("New tag", text: $newTag)
-                    .textFieldStyle(.plain)
-                    .font(.callout)
-                    .frame(width: 90)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Capsule().strokeBorder(Brand.accent.opacity(0.6)))
-                    .focused($tagFieldFocused)
-                    .onSubmit {
-                        let t = newTag.trimmingCharacters(in: .whitespaces)
-                        if !t.isEmpty { tracker.selectTag(t) }
-                        newTag = ""; addingTag = false
-                    }
-                    .onExitCommand { newTag = ""; addingTag = false }
+                inlineField($newTag, field: .newTag, placeholder: "New tag") {
+                    let t = newTag.trimmingCharacters(in: .whitespaces)
+                    if !t.isEmpty { tracker.selectTag(t) }
+                    newTag = ""; addingTag = false
+                } cancel: { newTag = ""; addingTag = false }
             } else {
-                Button { addingTag = true; tagFieldFocused = true } label: {
-                    Image(systemName: "plus").font(.system(size: 10, weight: .bold))
-                        .frame(width: 24, height: 22)
-                        .background(Capsule().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                Button { addingTag = true; focus(.newTag) } label: {
+                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
+                        .frame(width: 26, height: 22)
+                        .background(Capsule().strokeBorder(Brand.muted, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
                         .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
-                .help("New tag")
+                .buttonStyle(PressStyle())
+                .help("New tag · right-click a tag to rename, reorder or remove it")
             }
         }
+        .animation(.tracky, value: tracker.tags)
+        .animation(.tracky, value: tracker.selectedTag)
+    }
+
+    /// TextFields can't take focus in the same update that creates them, so focus on the next turn.
+    private func focus(_ f: Field) {
+        DispatchQueue.main.async { focusedField = f }
+    }
+
+    private func inlineField(_ text: Binding<String>, field: Field, placeholder: String,
+                             submit: @escaping () -> Void, cancel: @escaping () -> Void) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.callout)
+            .frame(width: 96)
+            .padding(.horizontal, 10).padding(.vertical, 3)
+            .background(Capsule().strokeBorder(Brand.signal.opacity(0.7)))
+            .focused($focusedField, equals: field)
+            .onSubmit(submit)
+            .onExitCommand(perform: cancel)
+            .onChange(of: focusedField) { old, new in
+                // Clicking elsewhere commits a new tag / rename, like Finder.
+                if old == field && new != field { submit() }
+            }
     }
 
     private func chip(_ label: String, color: Color?, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if let color { Circle().fill(selected ? .white : color).frame(width: 6, height: 6) }
-                Text(label).font(.callout)
+                if let color { Circle().fill(selected ? Color.white : color).frame(width: 6, height: 6) }
+                Text(label).font(.callout).lineLimit(1)
             }
-            .padding(.horizontal, 10).padding(.vertical, 4)
+            .padding(.horizontal, 10).padding(.vertical, 3)
             .foregroundStyle(selected ? Color.white : Color.primary)
-            .background(Capsule().fill(selected ? AnyShapeStyle(color ?? Color.gray) : AnyShapeStyle(.quaternary)))
+            .background(Capsule().fill(selected ? (color ?? Color.primary.opacity(0.75)) : .clear))
+            .overlay(Capsule().strokeBorder(selected ? .clear : Brand.muted))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressStyle())
     }
 
     // MARK: Today / this week
@@ -204,14 +274,14 @@ struct PopoverView: View {
                     HStack(alignment: .bottom, spacing: 3) {
                         ForEach(0..<7, id: \.self) { i in
                             VStack(spacing: 3) {
-                                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                                    .fill(i == todayIdx ? AnyShapeStyle(Brand.gradient) : AnyShapeStyle(.tertiary))
-                                    .frame(width: 9, height: max(3, 32 * values[i] / peak))
+                                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                                    .fill(i == todayIdx ? Brand.signal : Brand.muted)
+                                    .frame(width: 9, height: max(2, 32 * values[i] / peak))
                                 Text(["M", "T", "W", "T", "F", "S", "S"][i])
                                     .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(i == todayIdx ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                                     .fixedSize()
                                     .frame(width: 12)
-                                    .foregroundStyle(i == todayIdx ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                             }
                             .help(Stats.format(values[i]))
                         }
@@ -221,9 +291,9 @@ struct PopoverView: View {
                     let goal = Double(prefs.weeklyGoal) * 3600
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text("Weekly goal").font(.caption).foregroundStyle(.secondary)
+                            Text("Weekly goal \(prefs.weeklyGoal)h").font(.caption).foregroundStyle(.secondary)
                             Spacer()
-                            Text(week >= goal ? "Done 🎉" : "\(Stats.format(goal - week)) to go")
+                            Text(week >= goal ? "Reached" : "\(Stats.format(goal - week)) to go")
                                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         }
                         GoalBar(progress: week / goal)
@@ -236,27 +306,35 @@ struct PopoverView: View {
     private func stat(_ label: String, _ seconds: Double) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(Stats.format(seconds)).font(.system(.title3, design: .rounded).weight(.semibold).monospacedDigit())
+            Text(Stats.format(seconds)).font(.system(size: 17, weight: .semibold).monospacedDigit())
         }
         .fixedSize()
     }
 
-    // MARK: Settings + footer
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Button(action: openStats) { Label("Stats", systemImage: "chart.bar") }
+                .keyboardShortcut("s", modifiers: .command)
+            Spacer()
+            Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+    }
+
+    // MARK: Settings page
 
     private var settings: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 0) {
+            section("Tracking")
             row("Auto-pause when idle") {
                 Picker("", selection: $idle.minutes) {
                     ForEach(IdleMonitor.choices, id: \.self) { m in Text(m == 0 ? "Off" : "After \(m) min").tag(m) }
                 }
                 .labelsHidden().pickerStyle(.menu).fixedSize()
             }
-            row("Resume when I'm back") { Toggle("", isOn: $idle.autoResume).labelsHidden().disabled(!idle.enabled) }
-            row("Menu bar shows") {
-                Picker("", selection: $prefs.barMode) {
-                    ForEach(Prefs.BarMode.allCases) { Text($0.label).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.menu).fixedSize()
+            row("Resume when I'm back") {
+                Toggle("", isOn: $idle.autoResume).labelsHidden().disabled(!idle.enabled)
             }
             row("Weekly goal") {
                 HStack(spacing: 6) {
@@ -265,6 +343,13 @@ struct PopoverView: View {
                     Stepper("", value: $prefs.weeklyGoal, in: 0...100, step: 5).labelsHidden()
                 }
             }
+            section("Menu bar").padding(.top, 10)
+            row("Show") {
+                Picker("", selection: $prefs.barMode) {
+                    ForEach(Prefs.BarMode.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
             row("Launch at login") {
                 Toggle("", isOn: $launchAtLogin).labelsHidden()
                     .onChange(of: launchAtLogin) { _, on in
@@ -272,40 +357,46 @@ struct PopoverView: View {
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
                     }
             }
+            Text("Shortcuts: ⌥⌘T start/stop anywhere · right-click icon to start/stop · ⌘S stats · ⌘, settings")
+                .font(.caption).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 14)
         }
         .font(.callout)
         .toggleStyle(.switch)
-        .controlSize(.mini)
+        .controlSize(.small)
+    }
+
+    private func section(_ title: String) -> some View {
+        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom, 4)
     }
 
     private func row<C: View>(_ label: String, @ViewBuilder _ control: () -> C) -> some View {
-        HStack { Text(label); Spacer(); control() }.frame(minHeight: 20)
+        HStack { Text(label); Spacer(); control() }
+            .frame(minHeight: 30)
+            .overlay(alignment: .bottom) { Brand.hairline.frame(height: 1) }
     }
+}
 
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Button(action: openStats) { Label("Stats", systemImage: "chart.bar.xaxis") }
-                .keyboardShortcut("s", modifiers: .command)
-            Spacer()
-            Text("⌥⌘T").font(.caption.monospaced()).foregroundStyle(.tertiary)
-                .help("Start/stop from anywhere. Right-clicking the menu bar icon works too.")
-            Spacer()
-            Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
-        }
-        .buttonStyle(.borderless)
-        .font(.callout)
+/// Subtle press feedback for custom buttons.
+struct PressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 struct GoalBar: View {
     let progress: Double
-    var height: CGFloat = 6
+    var height: CGFloat = 4
 
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary)
-                Capsule().fill(Brand.gradient).frame(width: max(height, g.size.width * min(progress, 1)))
+                Capsule().fill(Brand.hairline)
+                Capsule().fill(Brand.signal).frame(width: max(height, g.size.width * min(progress, 1)))
             }
         }
         .frame(height: height)

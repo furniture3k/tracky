@@ -38,6 +38,7 @@ if [[ "${1:-}" == "--install" ]]; then
   pkill -x Tracky 2>/dev/null || true
   rm -rf /Applications/Tracky.app
   cp -R "$APP" /Applications/
+  rm -rf "$APP" # keep a single copy so Spotlight/Launchpad always open the installed one
   echo "Installed to /Applications/Tracky.app"
   open /Applications/Tracky.app
 fi

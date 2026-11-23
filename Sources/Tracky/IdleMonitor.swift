@@ -19,6 +19,11 @@ final class IdleMonitor: ObservableObject {
     var onChange: (() -> Void)?
 
     private let tracker: Tracker
+    /// True while the screen is locked or asleep. Never auto-resume then: a mouse nudge on the
+    /// lock screen counts as "activity" but isn't you working.
+    private var locked = false
+    private var asleep = false
+    private var away: Bool { locked || asleep }
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     init(tracker: Tracker) {
@@ -39,17 +44,13 @@ final class IdleMonitor: ObservableObject {
         let idle = Self.idleSeconds
         if tracker.isRunning, idle >= Double(minutes * 60) {
             tracker.autoPause(at: Date().addingTimeInterval(-idle))
-        } else if tracker.isPaused, autoResume, idle < 60 {
-            tracker.resume()
+        } else if tracker.isPaused, autoResume, !away, idle < 60 {
+            tracker.resume(at: Date().addingTimeInterval(-idle)) // back-date to when you returned
         }
     }
 
-    private func away() {
+    private func pauseNow() {
         if enabled, tracker.isRunning { tracker.autoPause(at: Date()) }
-    }
-
-    private func back() {
-        if enabled, autoResume, tracker.isPaused { tracker.resume() }
     }
 
     private func updateObservers() {
@@ -64,10 +65,17 @@ final class IdleMonitor: ObservableObject {
                 MainActor.assumeIsolated { f() }
             }))
         }
-        observe(ws, NSWorkspace.willSleepNotification.rawValue) { [weak self] in self?.away() }
-        observe(ws, NSWorkspace.screensDidSleepNotification.rawValue) { [weak self] in self?.away() }
-        observe(dist, "com.apple.screenIsLocked") { [weak self] in self?.away() }
-        observe(ws, NSWorkspace.didWakeNotification.rawValue) { [weak self] in self?.back() }
-        observe(dist, "com.apple.screenIsUnlocked") { [weak self] in self?.back() }
+        observe(ws, NSWorkspace.willSleepNotification.rawValue) { [weak self] in self?.asleep = true; self?.pauseNow() }
+        observe(ws, NSWorkspace.screensDidSleepNotification.rawValue) { [weak self] in self?.asleep = true; self?.pauseNow() }
+        observe(dist, "com.apple.screenIsLocked") { [weak self] in self?.locked = true; self?.pauseNow() }
+        // Waking alone isn't proof you're back (the screen is often still locked): the next minute
+        // tick resumes if there's real input and the screen isn't locked. Unlocking resumes at once.
+        observe(ws, NSWorkspace.didWakeNotification.rawValue) { [weak self] in self?.asleep = false }
+        observe(ws, NSWorkspace.screensDidWakeNotification.rawValue) { [weak self] in self?.asleep = false }
+        observe(dist, "com.apple.screenIsUnlocked") { [weak self] in
+            guard let self else { return }
+            locked = false
+            if enabled, autoResume, !asleep, tracker.isPaused { tracker.resume() }
+        }
     }
 }

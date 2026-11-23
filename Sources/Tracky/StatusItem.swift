@@ -27,11 +27,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         idle.onChange = { [weak self] in self?.refresh() }
         prefs.onChange = { [weak self] in self?.refresh() }
         hotKey = HotKey { [weak self] in MainActor.assumeIsolated { self?.tracker.toggle() } }
+        DistributedNotificationCenter.default().addObserver(forName: showPanelNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showPopover() }
+        }
         // Midnight rollover for "Today's total" mode.
         NotificationCenter.default.addObserver(forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateLabel() }
         }
         refresh()
+    }
+
+    /// Opening Tracky again (Finder, Spotlight, Launchpad) shows the panel instead of doing nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showPopover()
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -48,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             togglePopover()
         }
+    }
+
+    private func showPopover() {
+        if popover?.isShown != true { togglePopover() }
     }
 
     private func togglePopover() {

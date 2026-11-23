@@ -1,4 +1,8 @@
-// Renders the Tracky app icon into an .iconset folder. Usage: swift scripts/make-icon.swift <out.iconset>
+// Renders the Tracky app icon into an .iconset folder.
+// Usage: swiftc -O scripts/make-icon.swift -o make-icon && ./make-icon <out.iconset>
+//
+// A flat stopwatch on paper: ink dial and crown, a vermilion wedge set to 45 minutes, a centre knob.
+// No gradients or glow. Flat colour also keeps the PNGs tiny.
 import AppKit
 
 let out = CommandLine.arguments[1]
@@ -15,52 +19,43 @@ func render(_ px: Int) -> Data {
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     let s = CGFloat(px) / 1024
     ctx.scaleBy(x: s, y: s)
-    ctx.interpolationQuality = .high
 
-    // macOS icon grid: 824pt squircle centred in a 1024 canvas.
-    let squircle = CGPath(roundedRect: CGRect(x: 100, y: 100, width: 824, height: 824),
-                          cornerWidth: 186, cornerHeight: 186, transform: nil)
+    // macOS icon grid: 824pt tile centred in a 1024 canvas, with the standard soft drop shadow.
+    let tile = CGPath(roundedRect: CGRect(x: 100, y: 100, width: 824, height: 824),
+                      cornerWidth: 186, cornerHeight: 186, transform: nil)
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10 * s), blur: 28 * s, color: hex(0, 0.35))
-    ctx.addPath(squircle); ctx.setFillColor(hex(0x111116)); ctx.fillPath()
+    ctx.setShadow(offset: CGSize(width: 0, height: -8 * s), blur: 20 * s, color: hex(0, 0.28))
+    ctx.addPath(tile); ctx.setFillColor(hex(0xF3EFE6)); ctx.fillPath()
     ctx.restoreGState()
+    ctx.addPath(tile); ctx.setStrokeColor(hex(0x000000, 0.10)); ctx.setLineWidth(4); ctx.strokePath()
 
-    ctx.saveGState()
-    ctx.addPath(squircle); ctx.clip()
-    let bg = CGGradient(colorsSpace: cs, colors: [hex(0x2C2C36), hex(0x0C0C10)] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(bg, start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 100), options: [])
-    ctx.addPath(squircle); ctx.setStrokeColor(hex(0xFFFFFF, 0.12)); ctx.setLineWidth(5); ctx.strokePath()
-    ctx.restoreGState()
+    let c = CGPoint(x: 512, y: 488)
+    let ink = hex(0x1A1A1A)
 
-    let c = CGPoint(x: 512, y: 512), r: CGFloat = 250, lw: CGFloat = 66
+    // Stopwatch crown and stem.
+    ctx.setFillColor(ink)
+    ctx.addPath(CGPath(roundedRect: CGRect(x: 462, y: 812, width: 100, height: 46), cornerWidth: 14, cornerHeight: 14, transform: nil))
+    ctx.fillPath()
+    ctx.fill(CGRect(x: 494, y: 770, width: 36, height: 50))
 
-    ctx.setStrokeColor(hex(0xFFFFFF, 0.09)); ctx.setLineWidth(lw)
-    ctx.addArc(center: c, radius: r, startAngle: 0, endAngle: .pi * 2, clockwise: false); ctx.strokePath()
+    // Vermilion wedge, 12 o'clock clockwise to 9 o'clock (45 minutes).
+    ctx.move(to: c)
+    ctx.addArc(center: c, radius: 222, startAngle: .pi / 2, endAngle: -.pi, clockwise: true)
+    ctx.closePath()
+    ctx.setFillColor(hex(0xDB4527)); ctx.fillPath()
 
-    // 270° arc from 12 o'clock clockwise to 9 o'clock, filled with the brand gradient.
-    let arc = CGMutablePath()
-    arc.addArc(center: c, radius: r, startAngle: .pi / 2, endAngle: -.pi, clockwise: true)
-    let stroked = arc.copy(strokingWithWidth: lw, lineCap: .round, lineJoin: .round, miterLimit: 10)
-    ctx.saveGState()
-    ctx.addPath(stroked); ctx.clip()
-    let g = CGGradient(colorsSpace: cs, colors: [hex(0xFFB547), hex(0xFF6B4A), hex(0xFF3D6E)] as CFArray,
-                       locations: [0, 0.5, 1])!
-    ctx.drawLinearGradient(g, start: CGPoint(x: 700, y: 800), end: CGPoint(x: 280, y: 300),
-                           options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-    ctx.restoreGState()
+    // Ink dial ring.
+    ctx.setStrokeColor(ink); ctx.setLineWidth(42)
+    ctx.addEllipse(in: CGRect(x: c.x - 282, y: c.y - 282, width: 564, height: 564)); ctx.strokePath()
 
-    // Glowing playhead at the end of the arc.
-    ctx.saveGState()
-    ctx.setShadow(offset: .zero, blur: 44 * s, color: hex(0xFF4D6A, 0.95))
-    ctx.setFillColor(hex(0xFFFFFF))
-    ctx.fillEllipse(in: CGRect(x: c.x - r - 48, y: c.y - 48, width: 96, height: 96))
-    ctx.restoreGState()
+    // Centre knob.
+    ctx.setFillColor(ink)
+    ctx.fillEllipse(in: CGRect(x: c.x - 44, y: c.y - 44, width: 88, height: 88))
 
     return NSBitmapImageRep(cgImage: ctx.makeImage()!).representation(using: .png, properties: [:])!
 }
 
-// Stops at 512px: the 1024px variant alone would add ~0.5 MB for a menu bar app that's rarely seen in Finder.
 for (px, name) in [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"), (128, "128x128"),
-                   (256, "128x128@2x"), (256, "256x256"), (512, "256x256@2x")] {
+                   (256, "128x128@2x"), (256, "256x256"), (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")] {
     try! render(px).write(to: URL(fileURLWithPath: "\(out)/icon_\(name).png"))
 }
